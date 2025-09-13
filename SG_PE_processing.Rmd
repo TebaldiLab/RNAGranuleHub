@@ -1,0 +1,301 @@
+---
+title: "PE data processing for meta-analysis"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+# Specify Dataset
+DATASET <- "Iadevaia_ars_G3BP1"
+# Create group list
+group <- as.factor(c("Input", "Input", "Input", "SG", "SG", "SG"))
+# Directory path to files stored from pre-processing
+dir <- "/data/stefan/stress_granules/paired/Iadevaia_dataset/U2OS_ars_G3BP1_bp_wt/bam"
+output_folder <- "/home/stefan/count-tables"
+
+#Libraries
+if (!requireNamespace("GenomicFeatures", quietly=TRUE))
+  BiocManager::install("GenomicFeatures")
+
+
+library(edgeR)
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(pheatmap)
+library(clusterProfiler)
+library(enrichplot)
+library(ggplot2)
+library(org.Hs.eg.db)
+library(forcats)
+library(biomaRt)
+library(GenomicFeatures)
+library(DExMA)
+
+knitr::opts_chunk$set(echo = FALSE, cache = FALSE)
+```
+
+Dataset: `r DATASET`
+
+## Meta analysis pre-proccessing
+This is the first part of the processing of the pre-processed Paired-end data. This script has to be run on every dataset which will be use for the meta-analysis to get a set of count tables.
+The output of this script is the count table which has to be loaded in a subsequent R-script "meta_X" (X=name of meta-analysis tool used).
+
+```{r directories}
+
+```
+
+
+```{r anno-data, cache=TRUE}
+# loading reference database (ensg & enst)
+load("/data/stefan/anno/ens_anno_106_hs.RData")
+rownames(ensg)<-ensg$ensembl_gene_id
+```
+
+## STAR downstream
+```{r STAR}
+# Load data from ReadsPerGeneOut.tab 
+resume_STAR <- function(dir,        # folder containing *.ReadsPerGene.out.tab
+                        column = 2) # 2 = unstranded, 3 = sense, 4 = antisense
+{
+  # Find all the STAR count files
+  files <- list.files(path = dir,
+                      pattern = "ReadsPerGene\\.out\\.tab$",
+                      full.names = TRUE)
+  if (length(files) == 0) {
+    stop("No ReadsPerGene.out.tab files found in ", dir)
+  }
+  
+  # Harvest the gene IDs
+  first_df <- read.delim(files[1], header=FALSE, row.names=1,
+                         stringsAsFactors=FALSE)
+  keep_genes <- !grepl("^N_", rownames(first_df))
+  gene_ids   <- rownames(first_df)[keep_genes]
+  
+  # Read files
+  counts_list <- lapply(files, function(f) {
+    df <- read.delim(f, header=FALSE, row.names=1,
+                     stringsAsFactors=FALSE)
+    df <- df[keep_genes, , drop = FALSE]   # subset to same genes
+    if (column > ncol(df))
+      stop("Requested column ", column,
+           " but file ", basename(f),
+           " has only ", ncol(df), " columns.")
+    df[, column]
+  })
+  
+  # Name elements
+  samp_names <- tools::file_path_sans_ext(basename(files))
+  names(counts_list) <- samp_names
+  
+  # cbind into a matrix
+  counts_mat <- do.call(cbind, counts_list)
+  
+  # Ensembl IDs mapping
+  rownames(counts_mat) <- gene_ids
+  colnames(counts_mat) <- samp_names
+  
+  # (optional) sorting rows & columns
+  counts_mat <- counts_mat[ order(rownames(counts_mat)), 
+                            order(colnames(counts_mat)), 
+                            drop = FALSE ]
+  
+  return(counts_mat)
+}
+```
+
+
+```{r counts-matrix}
+# Count matrix
+counts_raw <- resume_STAR(dir, column = 2)
+
+counts_df <- as.data.frame(counts_raw)
+
+# Get rid of the version number of the Ensembl ID
+rownames(counts_df) <- sub("\\..*$", "", rownames(counts_df))
+```
+
+
+```{r sum-paired-unpaired} 
+#Strip Paired/unpaired from Sample names
+base_names <- sub(
+  "_(paired|unpaired)_ReadsPerGene\\.out$",  
+  "",                                         
+  colnames(counts_df)                         
+)
+unique_name <- unique(base_names)
+
+
+summed_df <- data.frame(row.names = rownames(counts_df))
+
+# sum columns with the same base name
+for (nm in unique_name) {
+  cols <- which(base_names == nm)
+  mat  <- counts_df[, cols, drop = FALSE]
+  summed_df[[nm]] <- rowSums(mat)
+}
+
+
+counts_df <-summed_df
+rm(summed_df, base_names, unique_name, nm)
+
+```
+
+```{r r_anno, warning=FALSE}
+# r_anno 
+counts<-counts_df[rownames(counts_df)%in%rownames(ensg),] # Reducing the amount of genes to only those which have annotation
+r_anno<-ensg[rownames(counts),]
+#This next line would translate ENSG names to Gene_symbol, but I for the RNBase (m6a) later, i want to keep ENSG
+#rownames(counts)<-rownames(r_anno)<-r_anno$external_gene_name
+counts<-counts[sort(rownames(counts)),]
+counts <- counts %>% drop_na() #Get rid fo NA rows
+
+r_anno<-r_anno[sort(rownames(counts)),] %>% dplyr::select(
+  ensembl_gene_id,
+  external_gene_name,
+  gene_biotype,
+  description,
+  chr_ucsc,
+  start_position,
+  end_position,
+  strand_ucsc)
+
+enst_select <- enst %>% dplyr::filter(canonical=="T")
+
+r_anno <- left_join(r_anno,(enst_select %>%
+                              dplyr::select(
+                                ensembl_transcript_id,
+                                external_transcript_name,
+                                transcript_biotype,
+                                transcript_length,
+                                ensembl_gene_id,
+                                l_5utr,l_cds,l_3utr,
+                                exon_count)))
+
+#r_anno <- r_anno[-20460, ] # Remove the one row which only is N/A
+rownames(r_anno) <- r_anno$external_gene_name
+
+write.csv(r_anno, "r_anno.csv")
+```
+
+## Data Exploration
+```{r library-size}
+## Library Size
+sampleT <- apply(counts, 2, sum)/10^3
+#sampleT.f <- apply(countsPerMillion, 2, sum)/10^3
+sampleT
+#sampleT.f
+
+sampleTDF <- data.frame(sample=names(sampleT), total=sampleT)
+#sampleTDF.f <- data.frame(sample=names(sampleT.f), total=sampleT.f)
+```
+
+### Library Sizes
+```{r plot-library-size, fig.cap= "Sequencing depth per sample (x 1000)"}
+p <- ggplot(aes(x=sample, y=sampleT, fill=sampleT), data=sampleTDF) + geom_bar(stat="identity")
+p + theme_classic() + theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.6)) + xlab("") + ylab("Reads × 1000")
+
+
+#p.f <- ggplot(aes(x=sample, y=sampleT.f, fill=sampleT.f), data=sampleTDF.f) + geom_bar(stat="identity")
+#p.f + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ylab("")
+```
+
+### Preprocessing (limma style) for DExMA meta analysis.
+```{r limma-preprocessing}
+#Create design
+design <- model.matrix(~ group)       
+rownames(design) <- colnames(counts)  
+
+
+# Create DGEList object
+dge <- DGEList(counts=counts)
+
+# Filter out rows which have zero or very low counts
+keep <- filterByExpr(dge, design)
+dge <- dge[keep,,keep.lib.sizes=FALSE]
+
+# Do TMM normalization
+dge <- calcNormFactors(dge)
+
+# Voom
+v <- voom(dge, design, plot = TRUE)
+
+# Transform back from the DGEList object to a counts table and do CountsPerMillion
+#counts.cpm <- cpm(dge, normalized.lib.sizes=TRUE, log=FALSE)
+```
+
+```{r save-counttable, eval=FALSE, include=FALSE}
+output_file <- file.path(output_folder, paste0(DATASET, "_counts.txt"))
+
+write.table(
+  v$E,
+  file = output_file,
+  sep = "\t",
+  quote = FALSE,
+  row.names = TRUE
+)
+
+cat("File saved to:", output_file, "\n")
+```
+### Sample Correlation Heatmap
+```{r DEG-dataexploration}
+#for QC. Plot the Sample relationship. Biolgoical replicates should cluster together
+cols <- c(Input = "steelblue", SG = "firebrick")[as.character(group)]
+plotMDS(dge, col=cols)
+
+# CPM filtering
+logCPM <- cpm(dge,
+              normalized.lib.sizes = TRUE,
+              log                  = TRUE,
+              prior.count          = 1)
+corMat <- cor(logCPM)
+heatmap(corMat, symm=TRUE, margins=c(10,10))
+```
+
+### PCA 
+```{r PCA}
+## PCA on log‐CPM
+
+pca <- prcomp(t(logCPM), center = TRUE, scale. = FALSE)
+
+#align with metadata
+pca_df <- as.data.frame(pca$x[,1:2])
+pca_df$sample <- rownames(pca_df)
+pca_df$group  <- group 
+
+# plot
+ggplot(pca_df, aes(x = PC1, y = PC2, color = group, label = sample)) +
+  geom_point(size = 3) +
+  geom_text(vjust = -1, size = 3) +
+  labs(
+    
+    x = sprintf("PC1 (%.1f%%)", 100 * summary(pca)$importance[2,1]),
+    y = sprintf("PC2 (%.1f%%)", 100 * summary(pca)$importance[2,2])
+  ) +
+  coord_cartesian(xlim = c(-150, 150), ylim = c(-40, 40)) +
+  theme_classic()
+```
+
+### Top variable genes
+```{r top-variable-genes}
+
+# top variable genes
+topVarGenes <- head(
+  order(apply(logCPM, 1, var), decreasing = TRUE),
+  500
+)
+
+annotation_col <- data.frame(
+  Group = group
+)
+rownames(annotation_col) <- colnames(logCPM)
+
+# plot heatmap
+pheatmap(
+  mat             = logCPM[topVarGenes, ],
+  scale           = "row",
+  annotation_col  = annotation_col,
+  show_rownames   = FALSE
+)
+
+```

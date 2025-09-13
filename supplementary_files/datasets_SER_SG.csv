@@ -1,0 +1,16 @@
+﻿Name;System;Stress_type;SG_bait;Condition ;Reference 
+Khong_ars_G3BP1;U-2 OS;arsenite;G3BP1;wildtype ;Khong et al., 2017
+Matheny19_ars_EDC3;U-2 OS;arsenite;ΔEDC3;wildtype ;Matheny et al., 2019
+Iadevaia_vir_G3BP1;U-2 OS;vial infection;G3BP1;wildtype ;Iadevaia et al., 2022
+Curdy_ag_G3BP1;T cell;antigen stimulation;G3BP1;wildtype ;Curdy et al., 2023
+Kudrin_ars_G3BP1;HeLa;arsenite;G3BP1;wildtype ;Kudrin et al., 2024
+Matheny21_ars_PABPC1;U-2 OS;arsenite;PABPC1;wildtype ;Matheny et al., 2021
+Matheny21_sorb_G3BP1;U-2 OS;sorbitol;G3BP1;wildtype ;Matheny et al., 2021
+Matheny21_sorb_PABPC1;U-2 OS;sorbitol;PABPC1;wildtype ;Matheny et al., 2021
+Zhou_ars_G3BP1;HeLa;arsenite;G3BP1;wildtype ;Zhou et al., 2024
+Zhou_heat_G3BP1;HeLa;heat shock;G3BP1;wildtype ;Zhou et al., 2024
+Zhou_osm_G3BP1;HeLa;NaCl osmosis;G3BP1;wildtype ;Zhou et al., 2024
+Zhou_UV_puro_G3BP1;HeLa;UV;G3BP1;wildtype ;Zhou et al., 2024
+Zhou_UV_G3BP1;HeLa;UV;G3BP1;wildtype ;Zhou et al., 2024
+Kudrin_NAT10ko_G3BP1;HeLa;arsenite;G3BP1;NAT10ko;Kudrin et al., 2024
+Matheny21_sorb_G3BPko;U-2 OS;sorbitol;G3BP1;G3BPko;Matheny et al., 2021
