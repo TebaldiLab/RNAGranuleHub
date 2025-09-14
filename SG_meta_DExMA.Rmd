@@ -11,6 +11,8 @@ if (!requireNamespace("GenomicFeatures", quietly=TRUE))
   BiocManager::install("GenomicFeatures")
 if (!requireNamespace("DexMA", quietly=TRUE))
   BiocManager::install("DExMA")
+if (!requireNamespace("EnhancedVolcano", quietly=TRUE))
+  BiocManager::install("EnhancedVolcano")
 
 
 library(edgeR)
@@ -28,6 +30,7 @@ library(GenomicFeatures)
 library(DExMA)
 library(RColorBrewer)
 library(kableExtra)
+library(EnhancedVolcano)
 
 knitr::opts_chunk$set(echo = FALSE, cache = FALSE)
 ```
@@ -394,6 +397,14 @@ resultsMA.anno.f <- resultsMA.anno %>%
 ```{r filter significant DEGs}
 ## Filter out significatly enriched and depleted by FC treshold
 # subset upregulated genes from MA results with log2FC cutoff and p-value
+enriched_filt <- resultsMA.anno %>%
+  filter(AveFC >= 0.5 & Pval <= 0.05) %>%
+  mutate(X = NULL, m6aNum.y = NULL, Biotype.y = NULL, Region.y = NULL) %>%
+  rename(m6aNum = m6aNum.x, Biotype = Biotype.x, Region = Region.x)
+
+write.csv(enriched_filt, "Meta-Analysis_enriched_genes.csv", row.names = TRUE)
+
+#Filter for protein-coding
 resultsMA.anno.up  <- resultsMA.anno.f %>%
   filter(AveFC >= 0.5 & Pval <= 0.05 )
 # subset all genes that are depleted
@@ -477,8 +488,7 @@ wilcox.test(exon_count ~ class, data = plot_df)
 ## Gene Biotype
 ```{r biotypes}
 
-biotype_dexma <- resultsMA.anno %>%
-  filter(AveFC >= 0.5 & Pval <= 0.05) %>%
+biotype_dexma <- enriched_filt %>%
   count(gene_biotype) %>%
   mutate(gene_biotype = ifelse(gene_biotype %in% c("protein_coding", "lncRNA"),
                                gene_biotype, "rest")) %>%
@@ -559,7 +569,8 @@ biancon_genes_high <- biancon_genes %>%
   #filter(consensus_class == "high") %>% 
   distinct(gene_symbol)
 
-enriched_genesMA <- resultsMA.anno.up %>%
+#enriched_genesMA <- resultsMA.anno.up %>%
+enriched_genesMA <- enriched_filt %>%
   dplyr::select("external_gene_name") %>%
   distinct(external_gene_name)
 
@@ -784,11 +795,33 @@ dotplot(go_cc)
 
 ```
 
+## Volcano Plot
+
 ```{r volcano-plot}
 
 pvals.p_df <- as.data.frame(pvals$p)
+pvals.FCE_df <- as.data.frame(pvals$logFC)
 
+zhou.p <- pvals.p_df %>%
+  dplyr::select(Zhou_UV_G3BP1)
 
+zhou.FC <- pvals.FCE_df %>%
+  dplyr::select(Zhou_UV_G3BP1)
+
+zhou.p <- rownames_to_column(zhou.p, var = "gene")
+zhou.FC <- rownames_to_column(zhou.FC, var = "gene")
+
+zhou.results <- left_join(zhou.p, zhou.FC, by = "gene") %>%
+  na.omit() %>%
+  rename(p_val = Zhou_UV_G3BP1.x) %>%
+  rename(FC = Zhou_UV_G3BP1.y )
+
+EnhancedVolcano(zhou.results,
+    lab = "gene",
+    x = "FC",
+    y = "p_val")
+
+```
 
 
 
